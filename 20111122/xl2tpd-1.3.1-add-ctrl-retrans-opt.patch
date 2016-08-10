@@ -1,0 +1,143 @@
+diff -Nur xl2tpd-1.3.1.orig//control.c xl2tpd-1.3.1//control.c
+--- xl2tpd-1.3.1.orig//control.c	2011-10-07 04:22:05.000000000 +0900
++++ xl2tpd-1.3.1//control.c	2012-02-17 19:33:21.393000058 +0900
+@@ -124,7 +124,7 @@
+     struct buffer *buf;
+     struct tunnel *t;
+     struct timeval tv;
+-    tv.tv_sec = HELLO_DELAY;
++    tv.tv_sec = gconfig.hellodelay ? gconfig.hellodelay : HELLO_DELAY;
+     tv.tv_usec = 0;
+     t = (struct tunnel *) tun;
+     buf = new_outgoing (t);
+diff -Nur xl2tpd-1.3.1.orig//file.c xl2tpd-1.3.1//file.c
+--- xl2tpd-1.3.1.orig//file.c	2011-10-07 04:22:05.000000000 +0900
++++ xl2tpd-1.3.1//file.c	2012-02-17 19:33:21.393000058 +0900
+@@ -48,6 +48,9 @@
+     gconfig.packet_dump = 0;
+     gconfig.debug_tunnel = 0;
+     gconfig.debug_state = 0;
++    gconfig.hellodelay = 0;
++    gconfig.ctrl_retrans_max = 0;
++    gconfig.ctrl_retrans_delay = 0;
+     lnslist = NULL;
+     laclist = NULL;
+     deflac = (struct lac *) calloc (1, sizeof (struct lac));
+@@ -1224,6 +1227,65 @@
+     }
+ }
+ 
++int set_hellodelay (char *word, char *value, int context, void *item)
++{
++    switch (context & ~CONTEXT_DEFAULT)
++    {
++    case CONTEXT_GLOBAL:
++#ifdef DEBUG_FILE
++        l2tp_log (LOG_DEBUG, "set_hellodelay: Setting HELLO delay %s\n",
++            value);
++#endif
++        set_int (word, value, &(((struct global *) item)->hellodelay));
++        break;
++    default:
++        snprintf (filerr, sizeof (filerr), "'%s' not valid in this context\n",
++            word);
++        return -1;
++    }
++    return 0;
++}
++
++int set_ctrl_retrans_max (char *word, char *value, int context, void *item)
++{
++    switch (context & ~CONTEXT_DEFAULT)
++    {
++    case CONTEXT_GLOBAL:
++#ifdef DEBUG_FILE
++        l2tp_log (LOG_DEBUG,
++            "set_ctrl_retrans_max: Setting Control packet retrans max %s\n",
++            value);
++#endif
++        set_int (word, value, &(((struct global *) item)->ctrl_retrans_max));
++        break;
++    default:
++        snprintf (filerr, sizeof (filerr), "'%s' not valid in this context\n",
++            word);
++        return -1;
++    }
++    return 0;
++}
++
++int set_ctrl_retrans_delay (char *word, char *value, int context, void *item)
++{
++    switch (context & ~CONTEXT_DEFAULT)
++    {
++    case CONTEXT_GLOBAL:
++#ifdef DEBUG_FILE
++        l2tp_log (LOG_DEBUG,
++            "set_ctrl_retrans_delay: Setting Control packet retrans delay %s\n",
++            value);
++#endif
++        set_int (word, value, &(((struct global *) item)->ctrl_retrans_delay));
++        break;
++    default:
++        snprintf (filerr, sizeof (filerr), "'%s' not valid in this context\n",
++            word);
++        return -1;
++    }
++    return 0;
++}
++
+ int parse_config (FILE * f)
+ {
+     /* Read in the configuration file handed to us */
+@@ -1502,5 +1564,8 @@
+     {"tx bps", &set_speed},
+     {"rx bps", &set_speed},
+     {"bps", &set_speed},
++    {"hello delay", &set_hellodelay},
++    {"ctrl retrans max", &set_ctrl_retrans_max},
++    {"ctrl retrans delay", &set_ctrl_retrans_delay},
+     {NULL, NULL}
+ };
+diff -Nur xl2tpd-1.3.1.orig//file.h xl2tpd-1.3.1//file.h
+--- xl2tpd-1.3.1.orig//file.h	2011-10-07 04:22:05.000000000 +0900
++++ xl2tpd-1.3.1//file.h	2012-02-17 19:35:39.231000158 +0900
+@@ -157,6 +157,9 @@
+     int debug_tunnel;		/* Print tunnel debugging info? */
+     int debug_state;		/* Print FSM debugging info? */
+     int ipsecsaref;
++    int hellodelay;		/* HELLO packet interval */
++    int ctrl_retrans_max;	/* Control packet retrans max count */
++    int ctrl_retrans_delay;		/*Control packet retrans delay */
+     int sarefnum;		/* Value of IPSEC_REFINFO used by kernel
+ 				 * (we used to pick 22, but 2.6.36+ took that, so now we pick 30)
+ 				 * Changed in SAref patch in openswan 2.6.36 for linux 2.6.36+ */
+diff -Nur xl2tpd-1.3.1.orig//network.c xl2tpd-1.3.1//network.c
+--- xl2tpd-1.3.1.orig//network.c	2011-10-07 04:22:05.000000000 +0900
++++ xl2tpd-1.3.1//network.c	2012-02-17 19:33:21.394000067 +0900
+@@ -182,6 +182,8 @@
+     struct tunnel *t;
+     struct timeval tv;
+     int ns;
++    int retrans_max = gconfig.ctrl_retrans_max ? gconfig.ctrl_retrans_max
++	                                           : DEFAULT_MAX_RETRIES;
+ 
+     if (!buf)
+     {
+@@ -212,7 +214,7 @@
+             return;
+         }
+     }
+-    if (buf->retries > DEFAULT_MAX_RETRIES)
++    if (buf->retries > retrans_max)
+     {
+         /*
+            * Too many retries.  Either kill the tunnel, or
+@@ -245,7 +247,7 @@
+         /*
+            * FIXME:  How about adaptive timeouts?
+          */
+-        tv.tv_sec = 1;
++        tv.tv_sec = gconfig.ctrl_retrans_delay ? gconfig.ctrl_retrans_delay : 1;
+         tv.tv_usec = 0;
+         schedule (tv, control_xmit, buf);
+ #ifdef DEBUG_CONTROL_XMIT
